@@ -6,7 +6,6 @@ Forked from: https://github.com/RagsToHrishes/WiperBot
 
 ## Dependencies
 
-**Learning code**
 - https://github.com/rail-berkeley/serl
 - https://github.com/rail-berkeley/manipulator_gym
 - https://github.com/youliangtan/agentlace
@@ -28,6 +27,8 @@ roslaunch wiper_bot.launch robot_model:=vx300s
 cd manipulator_gym
 python manipulator_server.py --viperx --non_blocking --resize_img 128 128
 ```
+
+---
 
 ## Run RL Policy with SERL
 
@@ -104,9 +105,15 @@ python viperx_drq.py --actor \
 --manipulator_ip 100.96.12.13 --show_img --reward_classifier_ckpt_path checkpoint_20
 ```
 
-To evaluate the model on the actor, add ` --checkpoint_path /hdd/serl_chkpts/` to load checkpoints
+To evaluate the model on the actor, add ` --checkpoint_path /hdd/serl_chkpts/` to load checkpoints. 
 
-### Finetune with RL Rollouts
+Provide `--log_rlds_path DIR_NAME` to save the rollout trajectories out as RLDS data.
+
+---
+
+## Run Octo Finetuning
+
+We will now finetune with RL Rollouts generated from the trained DRQ model.
 
 Now finetune the model using the generated RLDS dataset
 ```bash
@@ -120,3 +127,21 @@ Then evaluate the model
 python octo_eval.py --checkpoint_path MODEL_PATH \
 --ip IP_ADDRESS --show_img --text_cond "put the banana on the plate"
 ```
+
+---
+
+# Miscs
+
+To reshard the dataset, use the following command:
+
+```bash
+python oxe_envlogger/reshard_rlds.py --h # provide args
+```
+
+
+To read the rlds data for debugging
+```bash
+python manipulator_gym/read_rlds.py --h # provide args
+```
+
+Further robot related details, checkout: https://docs.google.com/document/d/1ka_eFiXbLxi1iIjKdj6b3So-xJhg2Cjd0j9N4w20w8Y/edit?pli=1
