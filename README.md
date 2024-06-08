@@ -76,7 +76,7 @@ cd utils/
 python vr_data_collection.py --oculus_publisher True
 
 # on the second terminal
-python vr_data_collection.py --robot_ip 100.96.12.13 --show_img True --rlds_output demo_bin_relocate_20_2025-05-14
+python vr_data_collection.py --robot_ip 100.96.12.13 --show_img True --rlds_output DATASET_DIR_NAME --lang_prompt "do something special"
 ```
 
 ### Run SERL
@@ -85,14 +85,38 @@ This is to run serl code on the robot. First, the provide the manipulator_ip as 
 
 RLDS is enabled by providing the `--preload_rlds_path` argument to the learner node. The path should be the path to the RLDS dataset.
 
-learner node
+**learner node**
+
+We can run the learner without the robot.
+
 ```bash
-python viperx_drq.py --batch_size 128 --checkpoint_period 5000 --checkpoint_path /hdd/serl_chkpts2/ --learner --preload_rlds_path /hdd/serl/task1_2jun_combine_fixbblock/ --reward_classifier_ckpt_path checkpoint_20
+python viperx_drq.py --batch_size 128  --learner \
+--checkpoint_period 5000 --checkpoint_path /hdd/serl_chkpts2/ \
+--preload_rlds_path /hdd/serl/task1_2jun_combine_fixbblock/ \
+--reward_classifier_ckpt_path checkpoint_20
 ```
 
 add ` --checkpoint_path /hdd/serl_chkpts/` to save/load checkpoints
 
-Actor node
+**Actor node**
 ```bash
-python viperx_drq.py --manipulator_ip 100.96.12.13 --actor --show_img --reward_classifier_ckpt_path checkpoint_20
+python viperx_drq.py --actor \
+--manipulator_ip 100.96.12.13 --show_img --reward_classifier_ckpt_path checkpoint_20
+```
+
+To evaluate the model on the actor, add ` --checkpoint_path /hdd/serl_chkpts/` to load checkpoints
+
+### Finetune with RL Rollouts
+
+Now finetune the model using the generated RLDS dataset
+```bash
+cd octo
+python scripts/finetune.py --config=../bc/viperx_finetune_config.py --config.pretrained_path=hf://rail-berkeley/octo-small
+```
+
+Then evaluate the model
+
+```bash
+python octo_eval.py --checkpoint_path MODEL_PATH \
+--ip IP_ADDRESS --show_img --text_cond "put the banana on the plate"
 ```
