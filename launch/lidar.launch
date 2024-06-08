@@ -1,0 +1,43 @@
+<launch>
+
+    
+  
+<!-- Lidar and Line Extraction from Scan-->
+    <node name="rplidarNode"          pkg="rplidar_ros"  type="rplidarNode" output="screen">
+        <param name="serial_port"         type="string" value="/dev/rplidar"/>  
+        <param name="serial_baudrate"     type="int"    value="256000"/>
+        <param name="frame_id"            type="string" value="laser"/>
+        <param name="inverted"            type="bool"   value="false"/>
+        <param name="angle_compensate"    type="bool"   value="true"/>
+    </node>
+    
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find rplidar_ros)/rviz/rplidar.rviz" />
+
+
+
+    <node name="line_extractor" pkg="laser_line_extraction" type="line_extraction_node">
+        <param name="~frequency" value="30.0" />
+        <param name="~frame_id" value="laser" />
+        <param name="~scan_topic" value="/scan_filtered" />
+        <param name="~publish_markers" value="true" />
+        <param name="~bearing_std_dev" value="1e-5" />
+        <param name="~range_std_dev" value="0.012" />
+        <param name="~least_sq_angle_thresh" value="0.0001" />
+        <param name="~least_sq_radius_thresh" value="0.0001" />
+        <param name="~max_line_gap" value="0.5" />
+        <param name="~min_line_length" value="0.7" />
+        <param name="~min_range" value="0.2" />
+        <param name="~max_range" value="10" />
+        <param name="~min_split_dist" value="0.04" />
+        <param name="~outlier_dist" value="0.06" />
+        <param name="~min_line_points" value="10" />
+    </node> 
+
+    <!-- Laser Scanner Filter -->
+    <!-- <node pkg="laser_filters" type="scan_to_scan_filter_chain" name="laser_filter">
+        <rosparam command="load" file="/home/hrish/WiperBot/config/laser_filter.yaml" />
+        <remap from="/scan" to="/scan_filtered" />
+    </node> -->
+
+
+</launch>

@@ -1,0 +1,144 @@
+<launch>
+    <arg name="robot_model" default="" />
+    <arg name="robot_name" default="$(arg robot_model)" />
+    <arg name="base_link_frame" default="base_link" />
+    <arg name="use_rviz" default="false" />
+    <arg name="mode_configs" default="$(find interbotix_xsarm_joy)/config/modes.yaml" />
+    <arg name="threshold" default="0.75" />
+    <arg name="controller" default="ps4" />
+    <arg name="launch_driver" default="true" />
+    <arg name="use_sim" default="false" />
+
+    <include if="$(arg launch_driver)"
+        file="$(find interbotix_xsarm_control)/launch/xsarm_control.launch">
+        <arg name="robot_model" value="$(arg robot_model)" />
+        <arg name="robot_name" value="$(arg robot_name)" />
+        <arg name="base_link_frame" value="$(arg base_link_frame)" />
+        <arg name="use_rviz" value="$(arg use_rviz)" />
+        <arg name="mode_configs" value="$(arg mode_configs)" />
+        <arg name="use_sim" value="$(arg use_sim)" />
+    </include>
+
+    <!-- Launch the camera -->
+    <!-- Shoulder cam-->
+    <node name="shoulder_cam" pkg="usb_cam" type="usb_cam_node" output="screen">
+        <rosparam file="/home/hrish/WiperBot/config/shoulder_cam.yaml" command="load" />
+    </node>
+
+    <!-- Nav cam -->
+    <node name="nav_cam" pkg="usb_cam" type="usb_cam_node" output="screen">
+        <rosparam
+            file="/home/hrish/WiperBot/System_Control/SystemControls/Navigation/visualnav-transformer/deployment/config/camera_front.yaml" command="load" />
+    </node>
+
+    <!-- Gripper cam -->
+    <node name="gripper_cam_yellow" pkg="usb_cam" type="usb_cam_node" output="screen">
+        <rosparam
+            file="/home/hrish/WiperBot/config/gripper_cam_yellow.yaml" command="load" />
+    </node>
+
+    <!-- Gripper cam -->
+    <node name="gripper_cam_black" pkg="usb_cam" type="usb_cam_node" output="screen">
+        <rosparam
+            file="/home/hrish/WiperBot/config/gripper_cam_black.yaml" command="load" />
+    </node>
+
+
+    <!-- Robot Arm and Tracer Base -->
+    <node
+        pkg="interbotix_xsarm_joy"
+        type="xsarm_joy"
+        name="xsarm_joy"
+        output="screen"
+        ns="$(arg robot_name)">
+        <param name="threshold" value="$(arg threshold)" />
+        <param name="controller" value="$(arg controller)" />
+    </node>
+
+    <node
+        pkg="interbotix_xsarm_joy"
+        type="xsarm_robot"
+        name="xsarm_robot"
+        output="screen"
+        ns="$(arg robot_name)">
+        <param name="robot_model" value="$(arg robot_model)" />
+    </node>
+
+    <include file="$(find tracer_base)/launch/tracer_base.launch">
+        <arg name="port_name" default="can0" />
+        <arg name="simulated_robot" default="false" />
+    </include>
+
+    <!-- Lidar and Line Extraction from Scan-->
+    <node name="rplidarNode" pkg="rplidar_ros" type="rplidarNode" output="screen">
+        <param name="serial_port" type="string" value="/dev/rplidar" />
+        <param name="serial_baudrate" type="int" value="256000" />
+        <param name="frame_id" type="string" value="laser" />
+        <param name="inverted" type="bool" value="false" />
+        <param name="angle_compensate" type="bool" value="true" />
+    </node>
+
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find rplidar_ros)/rviz/rplidar.rviz" />
+
+    <!-- <node pkg="laser_filters" type="scan_to_scan_filter_chain"
+        name="laser_filter">
+        <rosparam command="load" file="/home/hrish/WiperBot/config/laser_filter.yaml" />
+        <remap from="/scan" to="new_scan" />
+    </node> -->
+
+    <node name="line_extractor" pkg="laser_line_extraction" type="line_extraction_node">
+        <param name="~frequency" value="3.0.0" />
+        <param name="~frame_id" value="laser" />
+        <param name="~scan_topic" value="/scan_filtered" />
+        <param name="~publish_markers" value="true" />
+        <param name="~bearing_std_dev" value="1e-5" />
+        <param name="~range_std_dev" value="0.012" />
+        <param name="~least_sq_angle_thresh" value="0.0001" />
+        <param name="~least_sq_radius_thresh" value="0.0001" />
+        <param name="~max_line_gap" value="0.1" />
+        <param name="~min_line_length" value="0.4" />
+        <param name="~min_range" value="0.05" />
+        <param name="~max_range" value="2.5" />
+        <param name="~min_split_dist" value="0.04" />
+        <param name="~outlier_dist" value="0.06" />
+        <param name="~min_line_points" value="15" />
+    </node>
+
+    <!-- Laser Scanner Filter -->
+    <node pkg="laser_filters" type="scan_to_scan_filter_chain" name="laser_filter">
+        <rosparam command="load" file="/home/hrish/WiperBot/config/laser_filter.yaml" />
+    </node>
+
+    <!-- velocity mulitplexer -->
+    <arg name="nodelet_manager_name" value="nodelet_manager" />
+    <arg name="config_file"
+        value="/home/hrish/WiperBot/System_Control/SystemControls/Navigation/visualnav-transformer/deployment/config/cmd_vel_mux.yaml" />
+
+    <!-- nodelet manager -->
+    <node pkg="nodelet" type="nodelet" name="$(arg nodelet_manager_name)" args="manager" />
+
+    <!-- velocity mulitplexer -->
+    <include file="$(find yocs_cmd_vel_mux)/launch/cmd_vel_mux.launch">
+        <arg name="nodelet_manager_name" value="$(arg nodelet_manager_name)" />
+        <arg name="config_file" value="$(arg config_file)" />
+    </include>
+
+
+    <!-- Arduino Pressure Sensor Node -->
+    <node pkg="rosserial_python" type="serial_node.py" name="rosserial" output="screen">
+        <param name="port" type="string" value="/dev/arduino"/>
+        <param name="baud" type="int" value="57600"/>
+    </node> 
+
+    <node pkg="aruco_ros" type="marker_publisher" name="aruco_marker_publisher">
+        <remap from="/camera_info" to="/shoulder_cam/camera_info" />
+        <remap from="/image" to="/shoulder_cam/image_raw" />
+        <param name="image_is_rectified" value="True"/>
+        <param name="marker_size"        value="0.15"/>
+        <param name="reference_frame"    value=""/>  
+        <param name="camera_frame"       value="usb_cam"/>
+    </node>
+
+  
+
+</launch>
