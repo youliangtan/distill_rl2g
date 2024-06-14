@@ -39,15 +39,9 @@ from serl_launcher.utils.launcher import (
 
 # local imports
 from task_configs import get_task_config
-# from reward_classifier import (
-#     GPTBinaryRewardClassifierWrapper,
-#     FWBWFrontCameraBinaryRewardClassifierWrapper
-# )
 from wrappers import (
-    ModifyEnvAction,
+    ResizeEnvAction,
     MaxEpsLengthWrapper,
-    # BinaryRewardClassifierWrapper,
-    # FancyRewardClassifierWrapperWithGripper,
 )
 from manipulator_gym.utils.gym_wrappers import ResizeObsImageWrapper, ClipActionBoxBoundary
 from manipulator_gym.interfaces.base_interface import ManipulatorInterface
@@ -109,6 +103,7 @@ flags.DEFINE_boolean("debug", False, "Debug mode.")
 
 flags.DEFINE_string("log_rlds_path", None, "Path to save RLDS logs.")
 flags.DEFINE_string("preload_rlds_path", None, "Path to preload RLDS data.")
+flags.DEFINE_string("preload_online_rlds_path", None, "Path to preload online RLDS data.")
 
 flags.DEFINE_integer(
     "load_checkpoint_step", 0, "Provide a trained policy ckpt at this step"
@@ -493,7 +488,7 @@ def main(_):
             128, 128), "image_wrist": (128, 128)}
     )
     env = MaxEpsLengthWrapper(env, FLAGS.max_traj_length)
-    env = ModifyEnvAction(
+    env = ResizeEnvAction(
         env,
         task_config.action_dim,
         task_config.with_gripper,
@@ -565,6 +560,10 @@ def main(_):
             action = data['actions']
             next_obs = data["next_observations"]
 
+            # NOTE: we will normalize the action if it is the 
+            # raw rlds data.
+            is_original_rlds = True if len(obs["state"].shape) == 1 else False
+
             # convert data img shape from (h, w, c) to (History, h, w, c)
             # and resize to 128x128
             for key in image_keys:
@@ -582,22 +581,26 @@ def main(_):
             if len(next_obs["state"].shape) == 1:
                 next_obs["state"] = np.expand_dims(next_obs["state"], axis=0)
 
-            # NOTE: make smaller action according to the action_dim in task_config
-            mod_action = np.zeros(task_config.action_dim, dtype=np.float32)
-            if task_config.with_gripper:
-                mod_action[:task_config.action_dim -
-                           1] = action[:task_config.action_dim-1]
-                mod_action[-1] = action[-1]
-            else:
-                mod_action[:task_config.action_dim] = action[:task_config.action_dim]
-            action = mod_action
+            # NOTE: resize action dimension according to the action_dim in task_config
+            if is_original_rlds:
+                mod_action = np.zeros(task_config.action_dim, dtype=np.float32)
+                if task_config.with_gripper:
+                    mod_action[:task_config.action_dim -
+                            1] = action[:task_config.action_dim-1]
+                    mod_action[-1] = action[-1]
+                else:
+                    mod_action[:task_config.action_dim] = action[:task_config.action_dim]
+                action = mod_action
+            assert len(action) == task_config.action_dim, "action dim not equal to task_config action dim"
 
-            # rescale actions to -1 to 1
-            action = (action - prenorm_action_low) / \
-                (prenorm_action_high - prenorm_action_low) * 2.0 - 1.0
+            # rescale actions to -1 to 1 if is original rlds data
+            if is_original_rlds:
+                action = (action - prenorm_action_low) / \
+                    (prenorm_action_high - prenorm_action_low) * 2.0 - 1.0
+
             # ensure all actions are within -1 and 1
             assert np.all(action >= -1.0) and np.all(action <=
-                                                     1.0), "action not within -1 and 1"
+                    1.0), "action not within -1 and 1"
 
             data["observations"] = obs
             data['actions'] = action
@@ -613,6 +616,7 @@ def main(_):
                 data["masks"] = 0  # explicitly set masks to 0
                 print(
                     f"total reward in eps: {total_reward} , with size: {metadata['step_size']}")
+                print("-"*50)
                 total_reward = 0.0
 
                 if skip_curr_eps:
@@ -652,14 +656,15 @@ def main(_):
         # custom rlpd data transform END
         #########################################################################
 
+        # online buffer
         replay_buffer = make_replay_buffer(
             env,
             capacity=FLAGS.replay_buffer_capacity,
             rlds_logger_path=FLAGS.log_rlds_path,  # ignore for now
             type="memory_efficient_replay_buffer",
             image_keys=image_keys,
-            # preload_rlds_path=FLAGS.preload_rlds_path,
-            # preload_data_transform=preload_data_transform,
+            preload_rlds_path=FLAGS.preload_online_rlds_path,
+            preload_data_transform=preload_data_transform,
         )
 
         if FLAGS.preload_rlds_path:

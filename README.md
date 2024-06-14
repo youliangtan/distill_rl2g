@@ -74,7 +74,7 @@ This is for RLPD, 20 trajectories are collected for each task.
 cd utils/
 
 # publish the oculus data
-python vr_data_collection.py --oculus_publisher True
+python vr_data_collection.py --oculus_publisher
 
 # on the second terminal
 python vr_data_collection.py --robot_ip 100.96.12.13 --show_img True --rlds_output DATASET_DIR_NAME --lang_prompt "do something special"
@@ -91,10 +91,10 @@ RLDS is enabled by providing the `--preload_rlds_path` argument to the learner n
 We can run the learner without the robot.
 
 ```bash
-python viperx_drq.py --batch_size 128  --learner \
+python viperx_drq.py --batch_size 16  --learner \
 --checkpoint_period 5000 --checkpoint_path /hdd/serl_chkpts2/ \
---preload_rlds_path /hdd/serl/task1_2jun_combine_fixbblock/ \
---reward_classifier_ckpt_path checkpoint_20
+--reward_classifier_ckpt_path checkpoint_20 \
+--preload_rlds_path /hdd/serl/task1_2jun_combine_fixbblock/
 ```
 
 add ` --checkpoint_path /hdd/serl_chkpts/` to save/load checkpoints
@@ -107,7 +107,9 @@ python viperx_drq.py --actor \
 
 To evaluate the model on the actor, add ` --checkpoint_path /hdd/serl_chkpts/` to load checkpoints. 
 
-Provide `--log_rlds_path DIR_NAME` to save the rollout trajectories out as RLDS data.
+Provide `--log_rlds_path DIR_NAME` to save the online trajectories out as RLDS data.
+
+Provide online rlds as `--preload_online_rlds_path DIR_NAME` to load the online rlds data.
 
 ---
 

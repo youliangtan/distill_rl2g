@@ -197,7 +197,7 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
         done = False
         return rew, done
 
-    def compute_reward_v2(self, obs):
+    def compute_reward_v2(self, obs, debug=False):
         """
         Provide a reward when 
         the reward classifier is true and
@@ -208,11 +208,16 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
         bin_rew = (prob >= 0.5) * 1
 
         state = obs["state"][-1]
-        is_gripper_close = True if state[-1] < 0.5 else False
+        # NOTE: use 0.6 for gripper close since gripper might be grabbing something
+        is_gripper_close = True if state[-1] < 0.6 else False
         z_axis = state[2]
 
+        if debug:
+            print(f"bin_rew: {bin_rew}, gripper: {is_gripper_close}, z_axis: {z_axis}")
+
         if bin_rew == 1 and is_gripper_close and z_axis >= self._target_z_lift:
-            rew , done = 5.0, True
+            # print_blue("reached target z lift")
+            rew , done = 1.0, True
         else:
             rew, done = 0.0, False
         return rew, done
@@ -240,7 +245,7 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
 ##############################################################################
 
 
-class ModifyEnvAction(gym.Wrapper):
+class ResizeEnvAction(gym.Wrapper):
     """Convert 7 action space to N action space"""
 
     def __init__(self,
