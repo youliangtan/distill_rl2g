@@ -36,8 +36,10 @@ class GoToTarget:
 class PickUpSquishy(GoToTarget):
     name = "PickUpSquishy"
     workspace_boundary = np.array(
-        [[0.18, -0.15, -0.15],
-         [0.4, 0.15, 0.2]]
+        # [[0.18, -0.15, -0.15],
+        #  [0.4, 0.15, 0.2]]
+        [[0.18, -0.14, -0.15], # NOTE: smaller workspace
+         [0.4, 0.14, 0.2]]
     )
     # TODO update and use this reset pose
     random_reset_box = None
@@ -45,8 +47,8 @@ class PickUpSquishy(GoToTarget):
     reward_wrapper=FancyRewardClassifierWrapperWithGripper
     reward_wrapper_kwargs=dict(
         terminate_on_n_reward=5,
-        target_z=-0.15, # same as goal_pose[2]
-        target_z_lift=-0.12,  # NOTE: use sparse reward when provided
+        target_z=-0.14, # same as goal_pose[2]
+        # target_z_lift=-0.12,  # NOTE: use sparse reward when provided
     )
 
 ##############################################################################

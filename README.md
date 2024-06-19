@@ -82,19 +82,37 @@ python vr_data_collection.py --robot_ip 100.96.12.13 --show_img True --rlds_outp
 
 ### Run SERL
 
-This is to run serl code on the robot. First, the provide the manipulator_ip as the ip of the robot. Then, run the following commands on the robot and the learner node.
+This is to run serl code on the robot. First, the provide the `manipulator_ip` as the ip of the robot. Then, run the following commands on the robot and the learner node.
 
 RLDS is enabled by providing the `--preload_rlds_path` argument to the learner node. The path should be the path to the RLDS dataset.
+
+**Eval BC Policy**
+
+First we train the BC policy on the expert demonstrations.
+
+```bash
+python bc_policy.py --batch_size 128 --preload_rlds_path /hdd/serl/serl_task1_combine_13jun/ --checkpoint_path /hdd/serl_bc_chkpt/
+```
+
+Then we evaluate the policy on the robot.
+
+```bash
+python bc_policy.py --manipulator_ip 100.96.12.13 --show_img \
+--checkpoint_path /hdd/serl_bc_chkpt/ \
+--eval_checkpoint_step 8500
+```
 
 **learner node**
 
 We can run the learner without the robot.
 
 ```bash
-python viperx_drq.py --batch_size 16  --learner \
+python viperx_drq.py --batch_size 128  --learner \
 --checkpoint_period 5000 --checkpoint_path /hdd/serl_chkpts2/ \
 --reward_classifier_ckpt_path checkpoint_20 \
---preload_rlds_path /hdd/serl/task1_2jun_combine_fixbblock/
+--preload_rlds_path /hdd/serl/serl_task1_combine_13jun/ \
+--log_rlds_path /hdd/serl/task1_online_data_17jun_dense/ \
+--preload_online_rlds_path /hdd/serl/task1_online_data_17jun/
 ```
 
 add ` --checkpoint_path /hdd/serl_chkpts/` to save/load checkpoints

@@ -176,7 +176,7 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
         bin_rew = (prob >= 0.5) * 1
 
         state = obs["state"][-1]
-        is_gripper_close = True if state[-1] < 0.5 else False
+        is_gripper_close = True if state[-1] < 0.55 else False
 
         # ensure gripper is open when bin_rew is 0 ( not grabbing )
         if bin_rew == 0 and is_gripper_close:
@@ -192,6 +192,8 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
             # use z distance as reward when gripper is open
             dist = np.abs(state[2] - self._target_z)
             rew -= dist*0.05
+        #     print(f"dist: {dist}")
+        # print(f"bin_rew: {bin_rew}, gripper: {is_gripper_close}, gripper state: {state}")
 
         rew += bin_rew
         done = False
@@ -209,7 +211,7 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
 
         state = obs["state"][-1]
         # NOTE: use 0.6 for gripper close since gripper might be grabbing something
-        is_gripper_close = True if state[-1] < 0.6 else False
+        is_gripper_close = True if state[-1] < 0.55 else False
         z_axis = state[2]
 
         if debug:

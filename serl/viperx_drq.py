@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 # TODO action plan
-# 1. non-blocking control for franka works, so use non-blocking for faster serl?
-# 2. faster training speed with 4090
-# 3. use prior data also in online buffer
+# 1. faster training speed with 4090
+# 2. mixin for reward classifier?
+# 3. non mask for termination of reward 2.
+# 4. Implement IBRL  https://arxiv.org/pdf/2311.02198
+
 
 import time
 from functools import partial
@@ -21,21 +23,15 @@ import gym
 from gym.wrappers.record_episode_statistics import RecordEpisodeStatistics
 
 from serl_launcher.agents.continuous.drq import DrQAgent
-from serl_launcher.common.evaluation import evaluate
 from serl_launcher.utils.timer_utils import Timer
 from serl_launcher.wrappers.chunking import ChunkingWrapper
 from serl_launcher.utils.train_utils import concat_batches
 from serl_launcher.networks.reward_classifier import load_classifier_func
 
-from agentlace.trainer import TrainerServer, TrainerClient
+from agentlace.trainer import TrainerServer, TrainerClient, TrainerConfig
 from agentlace.data.data_store import QueuedDataStore
 
-from serl_launcher.utils.launcher import (
-    make_drq_agent,
-    make_trainer_config,
-    make_wandb_logger,
-    make_replay_buffer,
-)
+from serl_launcher.utils.launcher import make_wandb_logger, make_replay_buffer
 
 # local imports
 from task_configs import get_task_config
@@ -65,7 +61,7 @@ flags.DEFINE_integer("max_traj_length", 80, "Maximum length of trajectory.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_bool("save_model", False, "Whether to save model.")
 flags.DEFINE_integer("batch_size", 128, "Batch size.")
-flags.DEFINE_integer("utd_ratio", 4, "UTD ratio.")
+flags.DEFINE_integer("critic_actor_ratio", 4, "critic to actor update ratio.")
 
 flags.DEFINE_integer("max_steps", 1000000, "Maximum number of training steps.")
 flags.DEFINE_integer("replay_buffer_capacity", 200000,
@@ -123,8 +119,60 @@ def print_green(x): return print("\033[92m {}\033[00m".format(x))
 def print_yellow(x): return print("\033[93m {}\033[00m".format(x))
 
 
-TIME_STEP = 0.1
 EEF_DISPLACEMENT = 0.02
+
+##############################################################################
+
+def make_drq_agent(
+    seed,
+    sample_obs,
+    sample_action,
+    image_keys=("image",),
+    encoder_type="small",
+    discount=0.98,
+):
+    """
+    NOTE: modified version of the make_drq_agent function in the serl_launcher
+    """
+    agent = DrQAgent.create_drq(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
+        encoder_type=encoder_type,
+        use_proprio=True,
+        image_keys=image_keys,
+        policy_kwargs={
+            "tanh_squash_distribution": True,
+            "std_parameterization": "exp",
+            "std_min": 1e-5,
+            "std_max": 5,
+        },
+        critic_network_kwargs={
+            "activations": jax.nn.tanh,
+            "use_layer_norm": True,
+            "hidden_dims": [256, 256],
+        },
+        policy_network_kwargs={
+            "activations": jax.nn.tanh,
+            "use_layer_norm": True,
+            "hidden_dims": [256, 256],
+        },
+        temperature_init=1e-2,
+        discount=discount,
+        backup_entropy=False,
+        critic_ensemble_size=10,
+        critic_subsample_size=1, # NOTE YL: 1 default 2.
+    )
+    return agent
+
+
+def make_trainer_config():
+    return TrainerConfig(
+        port_number=5288,
+        broadcast_port=5289,
+        request_types=["send-stats"],
+        experimental_pipeline_port=5290, # experimental ds update
+    )
 
 ##############################################################################
 
@@ -256,12 +304,8 @@ def actor(agent: DrQAgent, task_config: dict,
                 )
                 actions = np.asarray(jax.device_get(actions))
 
-            print_green(f"actions: {actions}")
-
         # Step environment
         with timer.context("step_env"):
-            # print("actions: ", actions)
-            
             start_time = time.time()
             next_obs, reward, done, truncated, info = env.step(actions)
             reward = np.asarray(reward, dtype=np.float32)
@@ -272,7 +316,7 @@ def actor(agent: DrQAgent, task_config: dict,
                 actions=actions,
                 next_observations=next_obs,
                 rewards=reward,
-                masks=1.0 - done,
+                masks=1.0, # - done, # TODO: uncomment this
                 dones=done or truncated,
             )
             data_store.insert(transition)
@@ -396,12 +440,19 @@ def learner(rng, agent: DrQAgent,
         device=sharding.replicate(),
     )
 
+    # show replay buffer progress bar during training
+    pbar = tqdm.tqdm(
+        total=FLAGS.replay_buffer_capacity,
+        initial=len(replay_buffer),
+        desc="replay buffer",
+    )
+
     # wait till the replay buffer is filled with enough data
     timer = Timer()
     for step in tqdm.tqdm(range(FLAGS.max_steps), dynamic_ncols=True, desc="learner"):
         # run n-1 critic updates and 1 critic + actor update.
         # This makes training on GPU faster by reducing the large batch transfer time from CPU to GPU
-        for critic_step in range(FLAGS.utd_ratio - 1):
+        for critic_step in range(FLAGS.critic_actor_ratio - 1):
             with timer.context("sample_replay_buffer"):
                 batch = next(replay_iterator)
 
@@ -447,6 +498,7 @@ def learner(rng, agent: DrQAgent,
                 overwrite=True,
             )
 
+        pbar.update(len(replay_buffer) - pbar.n)  # update replay buffer bar
         update_steps += 1
 
 
@@ -636,7 +688,6 @@ def main(_):
             else:
                 rew, done = env_rew_func.compute_reward(obs)
                 data["rewards"] = rew
-                total_reward += rew
                 # print(f" step: {metadata['step']}, rew: {rew}") # sanity check
 
                 # Custom logic to skip the current episode
@@ -647,8 +698,10 @@ def main(_):
                     data["dones"] = True  # explicitly set dones to True
                     data["masks"] = 0  # explicitly set masks to 0
                     skip_curr_eps = True
+                    total_reward += rew # for debugging
                     # print("MARKING DONE") # sanity check
                     return None
+                total_reward += rew # for debugging
 
             return data
 
@@ -660,10 +713,10 @@ def main(_):
         replay_buffer = make_replay_buffer(
             env,
             capacity=FLAGS.replay_buffer_capacity,
-            rlds_logger_path=FLAGS.log_rlds_path,  # ignore for now
+            rlds_logger_path=FLAGS.log_rlds_path, # option to add more path with interleave
             type="memory_efficient_replay_buffer",
             image_keys=image_keys,
-            preload_rlds_path=FLAGS.preload_online_rlds_path,
+            preload_rlds_path=FLAGS.preload_online_rlds_path, # TODO: dont log again
             preload_data_transform=preload_data_transform,
         )
 
@@ -694,7 +747,7 @@ def main(_):
 
     elif FLAGS.actor:
         sampling_rng = jax.device_put(sampling_rng, sharding.replicate())
-        data_store = QueuedDataStore(50000)  # the queue size on the actor
+        data_store = QueuedDataStore(2000)  # the queue size on the actor
 
         # actor loop
         print_green("starting actor loop")
