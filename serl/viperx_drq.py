@@ -31,7 +31,8 @@ from serl_launcher.networks.reward_classifier import load_classifier_func
 from agentlace.trainer import TrainerServer, TrainerClient, TrainerConfig
 from agentlace.data.data_store import QueuedDataStore
 
-from serl_launcher.utils.launcher import make_wandb_logger, make_replay_buffer
+from serl_launcher.utils.launcher import make_wandb_logger, make_replay_buffer, make_bc_agent
+from serl_launcher.agents.continuous.bc import BCAgent
 
 # local imports
 from task_configs import get_task_config
@@ -57,7 +58,7 @@ flags.DEFINE_string("env", "moma-serl-task1", "Name of environment.")
 flags.DEFINE_string("agent", "drq", "Name of agent.")
 flags.DEFINE_string(
     "exp_name", None, "Name of the experiment for wandb logging.")
-flags.DEFINE_integer("max_traj_length", 80, "Maximum length of trajectory.")
+flags.DEFINE_integer("max_traj_length", 100, "Maximum length of trajectory.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_bool("save_model", False, "Whether to save model.")
 flags.DEFINE_integer("batch_size", 128, "Batch size.")
@@ -67,7 +68,7 @@ flags.DEFINE_integer("max_steps", 1000000, "Maximum number of training steps.")
 flags.DEFINE_integer("replay_buffer_capacity", 200000,
                      "Replay buffer capacity.")
 
-flags.DEFINE_integer("random_steps", 200,
+flags.DEFINE_integer("random_steps", 0, # TODO switch back
                      "Sample random actions for this many steps.")
 flags.DEFINE_integer("training_starts", 200,
                      "Training starts after this step.")
@@ -108,6 +109,10 @@ flags.DEFINE_string("task", "task1", "task name")
 flags.DEFINE_string(
     "reward_classifier_ckpt_path", None, "Path to reward classifier ckpt."
 )
+
+# bc agent
+flags.DEFINE_string("bc_chkpt_path", None, "Path to BC ckpt.")
+flags.DEFINE_integer("bc_chkpt_step", 0, "Step to load BC ckpt.")
 
 devices = jax.local_devices()
 num_devices = len(devices)
@@ -174,6 +179,9 @@ def make_trainer_config():
         experimental_pipeline_port=5290, # experimental ds update
     )
 
+def get_image_keys(env):
+    return [key for key in env.observation_space.keys() if key != "state"]
+
 ##############################################################################
 
 
@@ -185,13 +193,11 @@ def env_reward_wrapper(
     """
     reward_wrapper_kwargs = task_config.reward_wrapper_kwargs
     if FLAGS.reward_classifier_ckpt_path:
-        image_keys = [key for key in env.observation_space.keys()
-                      if key != "state"]
         sampling_rng, key = jax.random.split(sampling_rng)
         classifier_func = load_classifier_func(
             key=key,
             sample=env.observation_space.sample(),
-            image_keys=image_keys,
+            image_keys=get_image_keys(env),
             checkpoint_path=FLAGS.reward_classifier_ckpt_path,
         )
         reward_wrapper_kwargs["reward_classifier_func"] = classifier_func
@@ -209,6 +215,23 @@ def actor(agent: DrQAgent, task_config: dict,
     """
     This is the actor loop, which runs when "--actor" is set to True.
     """
+    # NOTE: for experimental IBRL
+    if FLAGS.bc_chkpt_path:
+        bc_agent: BCAgent = make_bc_agent(
+            FLAGS.seed,
+            env.observation_space.sample(),
+            env.action_space.sample(),
+            encoder_type=FLAGS.encoder_type,
+            image_keys=get_image_keys(env),
+        )
+        print_yellow(f"loading bc agent: {FLAGS.bc_chkpt_path} {FLAGS.bc_chkpt_step}")
+        ckpt = checkpoints.restore_checkpoint(
+            FLAGS.bc_chkpt_path,
+            bc_agent.state,
+            step=FLAGS.bc_chkpt_step,
+        )
+        bc_agent = bc_agent.replace(state=ckpt)
+
     reset_args = dict(
         target_state=task_config.reset_pose,
     )
@@ -289,6 +312,10 @@ def actor(agent: DrQAgent, task_config: dict,
     obs, _ = env.reset(**reset_args)
     done = False
 
+    @partial(jax.jit)
+    def jit_forward_critic(observations, actions, rng):
+        return agent.forward_critic(observations, actions, rng, train=False)
+
     for step in tqdm.tqdm(range(FLAGS.max_steps), dynamic_ncols=True):
         timer.tick("total")
 
@@ -302,6 +329,41 @@ def actor(agent: DrQAgent, task_config: dict,
                     seed=key,
                     deterministic=False,
                 )
+
+                ## experimental ibrl impl
+                if FLAGS.bc_chkpt_path:
+                    bc_actions = bc_agent.sample_actions(
+                        observations=jax.device_put(obs),
+                        argmax=True,
+                    )
+                    # get val from critic
+                    drq_q = jit_forward_critic(
+                        observations=jax.device_put(obs),
+                        actions=actions,
+                        rng=sampling_rng,
+                        # train=False,
+                    )
+                    # get val from critic
+                    bc_q = jit_forward_critic(
+                        observations=jax.device_put(obs),
+                        actions=bc_actions,
+                        rng=sampling_rng,
+                        # train=False,
+                    )
+                    # print_yellow(f"bc_q: {bc_q}, drq_q: {drq_q}")
+                    # bc_q = bc_q.mean(axis=0)
+                    # drq_q = drq_q.mean(axis=0)
+                    # take max
+                    bc_q = bc_q.max(axis=0)
+                    drq_q = drq_q.max(axis=0)
+                    if bc_q > drq_q:
+                        print_yellow(f"using bc actions")
+                        actions = bc_actions
+                        # clip within 1, -1
+                        actions = jnp.clip(actions, -1.0, 1.0)
+                    else:
+                        print_yellow(f"using drq actions")
+
                 actions = np.asarray(jax.device_get(actions))
 
         # Step environment
@@ -316,7 +378,7 @@ def actor(agent: DrQAgent, task_config: dict,
                 actions=actions,
                 next_observations=next_obs,
                 rewards=reward,
-                masks=1.0, # - done, # TODO: uncomment this
+                masks=1.0 - done, # TODO maybe to mask
                 dones=done or truncated,
             )
             data_store.insert(transition)
@@ -557,8 +619,7 @@ def main(_):
     print_yellow(f"observation_space: {env.observation_space}")
     print_yellow(f"action_space: {env.action_space}")
 
-    image_keys = [key for key in env.observation_space.keys()
-                  if key != "state"]
+    image_keys=get_image_keys(env)
     print(f"image_keys: {image_keys}")
     obs, _ = env.reset()
     for key in obs.keys():
@@ -577,7 +638,7 @@ def main(_):
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
     agent: DrQAgent = jax.device_put(
-        jax.tree_map(jnp.array, agent), sharding.replicate()
+        jax.jax.tree_util.tree_map(jnp.array, agent), sharding.replicate()
     )
 
     ##############################################################################

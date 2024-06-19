@@ -42,7 +42,7 @@ flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_bool("save_model", True, "Whether to save model.")
 flags.DEFINE_integer("batch_size", 256, "Batch size.")
 
-flags.DEFINE_integer("max_steps", 10000, "Maximum number of training steps.")
+flags.DEFINE_integer("max_steps", 20000, "Maximum number of training steps.")
 flags.DEFINE_integer("replay_buffer_capacity", 10000, "Replay buffer capacity.")
 # "small" is a 4 layer convnet, "resnet" and "mobilenet" are frozen with pretrained weights
 flags.DEFINE_string("encoder_type", "resnet-pretrained", "Encoder type.")

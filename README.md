@@ -91,7 +91,7 @@ RLDS is enabled by providing the `--preload_rlds_path` argument to the learner n
 First we train the BC policy on the expert demonstrations.
 
 ```bash
-python bc_policy.py --batch_size 128 --preload_rlds_path /hdd/serl/serl_task1_combine_13jun/ --checkpoint_path /hdd/serl_bc_chkpt/
+python bc_policy.py --batch_size 128 --preload_rlds_path /hdd/serl/serl_task1_combine_18jun/ --checkpoint_path /hdd/serl_bc_chkpt/
 ```
 
 Then we evaluate the policy on the robot.
@@ -110,7 +110,7 @@ We can run the learner without the robot.
 python viperx_drq.py --batch_size 128  --learner \
 --checkpoint_period 5000 --checkpoint_path /hdd/serl_chkpts2/ \
 --reward_classifier_ckpt_path checkpoint_20 \
---preload_rlds_path /hdd/serl/serl_task1_combine_13jun/ \
+--preload_rlds_path /hdd/serl/serl_task1_combine_18jun/ \
 --log_rlds_path /hdd/serl/task1_online_data_17jun_dense/ \
 --preload_online_rlds_path /hdd/serl/task1_online_data_17jun/
 ```
@@ -121,6 +121,9 @@ add ` --checkpoint_path /hdd/serl_chkpts/` to save/load checkpoints
 ```bash
 python viperx_drq.py --actor \
 --manipulator_ip 100.96.12.13 --show_img --reward_classifier_ckpt_path checkpoint_20
+
+# provide additional args for ibrl
+--bc_chkpt_path /hdd/serl_bc_chkpt/ --bc_chkpt_step 20000
 ```
 
 To evaluate the model on the actor, add ` --checkpoint_path /hdd/serl_chkpts/` to load checkpoints. 

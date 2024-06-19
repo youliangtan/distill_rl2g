@@ -43,12 +43,12 @@ class PickUpSquishy(GoToTarget):
     )
     # TODO update and use this reset pose
     random_reset_box = None
-    reset_pose = np.array([0.26, 0.0, 0.1, 0.0, math.pi/2, 0.0, 1.0]) # open
+    reset_pose = np.array([0.26, 0.0, 0.05, 0.0, math.pi/2, 0.0, 1.0]) # open
     reward_wrapper=FancyRewardClassifierWrapperWithGripper
     reward_wrapper_kwargs=dict(
         terminate_on_n_reward=5,
         target_z=-0.14, # same as goal_pose[2]
-        # target_z_lift=-0.12,  # NOTE: use sparse reward when provided
+        target_z_lift=-0.12,  # NOTE: use sparse reward when provided
     )
 
 ##############################################################################
