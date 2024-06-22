@@ -243,21 +243,19 @@ def main(_):
 
         is_failure = False
         is_success = False
+        is_paused = False
 
         def esc_on_press(key):
-            nonlocal is_failure
+            nonlocal is_failure, is_success, is_paused
             if key == keyboard.Key.esc:
                 is_failure = True
-
-        def space_on_press(key):
-            nonlocal is_success
-            if key == keyboard.Key.space and not is_success:
+            elif key == keyboard.Key.space and not is_success:
                 is_success = True
+            elif key == keyboard.Key.shift:
+                is_paused = not is_paused
 
-        esc_listener = keyboard.Listener(on_press=esc_on_press)
-        esc_listener.start()
-        space_listener = keyboard.Listener(on_press=space_on_press)
-        space_listener.start()
+        keyboard_listener = keyboard.Listener(on_press=esc_on_press)
+        keyboard_listener.start()
 
         ckpt = checkpoints.restore_checkpoint(
             FLAGS.checkpoint_path,
@@ -280,6 +278,11 @@ def main(_):
             is_success = False
             start_time = time.time()
             while not done:
+                
+                if is_paused:
+                    time.sleep(0.1)
+                    continue
+
                 actions = agent.sample_actions(
                     observations=jax.device_put(obs),
                     argmax=True,

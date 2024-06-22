@@ -621,7 +621,8 @@ def main(_):
 
     image_keys=get_image_keys(env)
     print(f"image_keys: {image_keys}")
-    obs, _ = env.reset()
+    obs, _ = env.reset(target_state=task_config.reset_pose)
+
     for key in obs.keys():
         print(f"key: {key}, shape: {obs[key].shape}")
     print("\033[91m {}\033[00m".format("-"*50))
