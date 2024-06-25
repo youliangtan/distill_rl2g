@@ -107,12 +107,12 @@ python bc_policy.py --manipulator_ip 100.96.12.13 --show_img \
 We can run the learner without the robot.
 
 ```bash
-python viperx_drq.py --batch_size 128  --learner \
+python viperx_drq.py --batch_size 256  --learner \
 --checkpoint_period 5000 --checkpoint_path /hdd/serl_chkpts2/ \
 --reward_classifier_ckpt_path checkpoint_20 \
 --preload_rlds_path /hdd/serl/serl_task1_combine_18jun/ \
---log_rlds_path /hdd/serl/task1_online_data_17jun_dense/ \
---preload_online_rlds_path /hdd/serl/task1_online_data_17jun/
+--preload_online_rlds_path /hdd/serl/task1_online_data_17jun/ \
+# --log_rlds_path /hdd/serl/task1_online_data_17jun_dense/ \
 ```
 
 add ` --checkpoint_path /hdd/serl_chkpts/` to save/load checkpoints

@@ -48,7 +48,8 @@ class PickUpSquishy(GoToTarget):
     reward_wrapper_kwargs=dict(
         terminate_on_n_reward=5,
         target_z=-0.14, # same as goal_pose[2]
-        target_z_lift=-0.12,  # NOTE: use sparse reward when provided
+        target_z_lift=-0.12,  # NOTE: use sparse reward when provided v2
+        gripper_penalty=0.1,   # sparse reward v3
     )
 
 ##############################################################################

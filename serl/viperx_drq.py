@@ -5,7 +5,8 @@
 # 2. mixin for reward classifier?
 # 3. non mask for termination of reward 2.
 # 4. Implement IBRL  https://arxiv.org/pdf/2311.02198
-
+# 5. gripper penalty
+# 6. larger resnet layer?
 
 import time
 from functools import partial
@@ -166,7 +167,7 @@ def make_drq_agent(
         discount=discount,
         backup_entropy=False,
         critic_ensemble_size=10,
-        critic_subsample_size=1, # NOTE YL: 1 default 2.
+        critic_subsample_size=2, # NOTE YL: 1 default 2.
     )
     return agent
 
@@ -523,6 +524,7 @@ def learner(rng, agent: DrQAgent,
                 if demo_iterator is not None:
                     demo_batch = next(demo_iterator)
                     batch = concat_batches(batch, demo_batch, axis=0)
+                    print_yellow(f"demo_batch size: {len(demo_batch)}, replay batch size: {len(batch)}")
 
             with timer.context("train_critics"):
                 agent, critics_info = agent.update_critics(
@@ -537,6 +539,7 @@ def learner(rng, agent: DrQAgent,
             if demo_iterator is not None:
                 demo_batch = next(demo_iterator)
                 batch = concat_batches(batch, demo_batch, axis=0)
+                print_yellow(f"demo_batch shape: {demo_batch.keys()}, replay batch shape: {batch.keys()}")
 
             agent, update_info = agent.update_high_utd(batch, utd_ratio=1)
 
@@ -670,6 +673,10 @@ def main(_):
             nonlocal total_reward, skip_curr_eps
             REWARD_STEPS = 8
 
+            # we will skip first 2 datapoints since some dataset has gripper closed
+            if metadata["step"] == 0 or metadata["step"] == 1:
+                return None
+
             obs = data["observations"]
             action = data['actions']
             next_obs = data["next_observations"]
@@ -748,7 +755,7 @@ def main(_):
                     data["rewards"] = 0.0
 
             else:
-                rew, done = env_rew_func.compute_reward(obs)
+                rew, done = env_rew_func.compute_reward(obs, action)
                 data["rewards"] = rew
                 # print(f" step: {metadata['step']}, rew: {rew}") # sanity check
 
@@ -762,7 +769,7 @@ def main(_):
                     skip_curr_eps = True
                     total_reward += rew # for debugging
                     # print("MARKING DONE") # sanity check
-                    return None
+                    # return None
                 total_reward += rew # for debugging
 
             return data
