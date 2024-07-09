@@ -91,15 +91,15 @@ RLDS is enabled by providing the `--preload_rlds_path` argument to the learner n
 First we train the BC policy on the expert demonstrations.
 
 ```bash
-python bc_policy.py --batch_size 128 --preload_rlds_path /hdd/serl/serl_task1_combine_18jun/ --checkpoint_path /hdd/serl_bc_chkpt/
+python bc_policy.py --batch_size 128 --preload_rlds_path /hdd/serl/serl_task1_combine_18jun/ --checkpoint_path /hdd/serl_bc_chkpt_3jul/
 ```
 
 Then we evaluate the policy on the robot.
 
 ```bash
 python bc_policy.py --manipulator_ip 100.96.12.13 --show_img \
---checkpoint_path /hdd/serl_bc_chkpt/ \
---eval_checkpoint_step 8500
+--checkpoint_path /hdd/serl_bc_chkpt_3jul/ \
+--eval_checkpoint_step 20000
 ```
 
 **learner node**
@@ -115,7 +115,7 @@ python viperx_drq.py --batch_size 256  --learner \
 # --log_rlds_path /hdd/serl/task1_online_data_17jun_dense/ \
 ```
 
-add ` --checkpoint_path /hdd/serl_chkpts/` to save/load checkpoints
+add ` --checkpoint_path /hdd/serl_bc_chkpt_3jul/` to save/load checkpoints
 
 **Actor node**
 ```bash

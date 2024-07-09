@@ -34,7 +34,7 @@ from manipulator_gym.manipulator_env import ManipulatorEnv, StateEncoding
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("env", "FrankaEnv-Vision-v0", "Name of environment.")
+flags.DEFINE_string("env", "distill_rl2g_bc", "Name of environment.")
 flags.DEFINE_string("agent", "bc", "Name of agent.")
 flags.DEFINE_string("exp_name", None, "Name of the experiment for wandb logging.")
 flags.DEFINE_integer("max_traj_length", 100, "Maximum length of trajectory.")
@@ -127,6 +127,7 @@ def main(_):
         env.action_space.sample(),
         encoder_type=FLAGS.encoder_type,
         image_keys=image_keys,
+        image_augmentation=("random_crop", "color_transform"),
     )
 
     #########################################################################
@@ -224,7 +225,10 @@ def main(_):
         for step in tqdm(range(FLAGS.max_steps)):
             batch = next(replay_iterator)
             agent, info = agent.update(batch)
-            wandb_logger.log(info, step=step)
+
+            # log to wandb every 100 steps
+            if (step + 1) % 100 == 0:
+                wandb_logger.log(info, step=step)
 
             if (step + 1) % 2000 == 0 and FLAGS.save_model:
                 checkpoints.save_checkpoint(
@@ -234,6 +238,10 @@ def main(_):
                     keep=10,
                     overwrite=True,
                 )
+
+            # Run evaluate the agent and log to wandb every 200 steps
+            if (step + 1) % 200 == 0:
+                wandb_logger.log(agent.get_debug_metrics(batch), step=step)
 
     else:
         """

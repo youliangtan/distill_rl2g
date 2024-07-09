@@ -168,6 +168,7 @@ def make_drq_agent(
         backup_entropy=False,
         critic_ensemble_size=10,
         critic_subsample_size=2, # NOTE YL: 1 default 2.
+        image_augmentation=("random_crop", "color_transform"),
     )
     return agent
 
@@ -524,7 +525,6 @@ def learner(rng, agent: DrQAgent,
                 if demo_iterator is not None:
                     demo_batch = next(demo_iterator)
                     batch = concat_batches(batch, demo_batch, axis=0)
-                    print_yellow(f"demo_batch size: {len(demo_batch)}, replay batch size: {len(batch)}")
 
             with timer.context("train_critics"):
                 agent, critics_info = agent.update_critics(
@@ -539,7 +539,6 @@ def learner(rng, agent: DrQAgent,
             if demo_iterator is not None:
                 demo_batch = next(demo_iterator)
                 batch = concat_batches(batch, demo_batch, axis=0)
-                print_yellow(f"demo_batch shape: {demo_batch.keys()}, replay batch shape: {batch.keys()}")
 
             agent, update_info = agent.update_high_utd(batch, utd_ratio=1)
 
@@ -767,11 +766,9 @@ def main(_):
                     data["dones"] = True  # explicitly set dones to True
                     data["masks"] = 0  # explicitly set masks to 0
                     skip_curr_eps = True
-                    total_reward += rew # for debugging
                     # print("MARKING DONE") # sanity check
                     # return None
                 total_reward += rew # for debugging
-
             return data
 
         #########################################################################
