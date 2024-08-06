@@ -1,72 +1,123 @@
+from typing import Callable, Optional
 import pickle as pkl
 import jax
 from jax import numpy as jnp
-import flax.linen as nn
-from flax.training.train_state import TrainState
-from flax.core import frozen_dict
-from flax.training import checkpoints
-import orbax.checkpoint as ocp
 import flax
-import orbax.checkpoint
+import flax.linen as nn
+from flax.training import checkpoints
 import optax
 from tqdm import tqdm
 import gym
 import os
 from absl import app, flags
+import numpy as np
 
-from serl_launcher.wrappers.chunking import ChunkingWrapper
 from serl_launcher.utils.train_utils import concat_batches
-from serl_launcher.vision.data_augmentations import batched_random_crop
-
-from serl_launcher.data.data_store import (
-    MemoryEfficientReplayBufferDataStore,
-    populate_data_store,
-)
-from manipulator_gym.manipulator_env import ManipulatorEnv, StateEncoding
-from manipulator_gym.interfaces.interface_service import ActionClientInterface
-from manipulator_gym.interfaces.base_interface import ManipulatorInterface
-from manipulator_gym.utils.gym_wrappers import (
-    ConvertState2Proprio,
-    ResizeObsImageWrapper,
-)
-
-from serl_launcher.wrappers.serl_obs_wrappers import SERLObsWrapper
-from serl_launcher.wrappers.chunking import ChunkingWrapper
+from serl_launcher.vision.data_augmentations import batched_random_crop, batched_color_transform
+from serl_launcher.data.data_store import MemoryEfficientReplayBufferDataStore
 from serl_launcher.networks.reward_classifier import create_classifier
+
 
 # Set above env export to prevent OOM errors from memory preallocation
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".2"
 
 FLAGS = flags.FLAGS
-flags.DEFINE_multi_string("positive_demo_paths", None, "paths to positive demos")
-flags.DEFINE_multi_string("negative_demo_paths", None, "paths to negative demos")
-flags.DEFINE_string("classifier_ckpt_path", ".", "Path to classifier checkpoint")
+flags.DEFINE_multi_string("positive_demo_paths", None,
+                          "paths to positive demos")
+flags.DEFINE_multi_string("negative_demo_paths", None,
+                          "paths to negative demos")
+flags.DEFINE_string("classifier_ckpt_path", ".",
+                    "Path to classifier checkpoint")
 flags.DEFINE_integer("batch_size", 256, "Batch size for training")
 flags.DEFINE_integer("num_epochs", 100, "Number of epochs for training")
 
-def main(_):
-    env = ManipulatorEnv(
-        # workspace_boundary=np.array([[-0.5, -0.5, 0.01],  [0.5, 0.5, 0.45]]),
-        manipulator_interface=ManipulatorInterface(),
-        # manipulator_interface=ManipulatorInterface(), # for testing
-        state_encoding=StateEncoding.POS_EULER,
-        use_wrist_cam=True,
-    )
-    env = ResizeObsImageWrapper(
-        env, resize_size={"image_primary": (128, 128), "image_wrist": (128, 128)}
-    )
-    env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
 
-    # we will only use the front camera view for training the reward classifier
-    train_reward_classifier(env.observation_space, env.action_space)
+def populate_data_store(
+    data_store: MemoryEfficientReplayBufferDataStore,
+    demos_path: str,
+    transform: Optional[Callable] = None,
+):
+    """
+    Utility function to populate demonstrations data into data_store.
+    :Args:
+        data_store (MemoryEfficientReplayBufferDataStore): Data store to populate.
+        demos_path (str): Path to the demonstrations.
+        transform (Optional[Callable]): Transform function to apply to the data. Defaults to None.
+    :return data_store
+    """
+    for demo_path in demos_path:
+        with open(demo_path, "rb") as f:
+            demo = pkl.load(f)
+            for transition in demo:
+                # Temp method to apply transform to the observations and actions
+                if transform is not None:
+                    transition["observations"] = transform(
+                        transition["observations"])
+                    transition["next_observations"] = transform(
+                        transition["next_observations"]
+                    )
+                    transition["actions"] = transform(transition["actions"])
+                data_store.insert(transition)
+    print(f"Populated data store with {len(data_store)} transitions.")
+    return data_store
 
 
-def train_reward_classifier(observation_space, action_space):
+def get_gym_space(data_sample) -> gym.spaces.Space:
+    """
+    Get the data type as Gym space of a provided data sample.
+    This function currently only supports common types like Box and Dict type.
+
+    :Args:  data_sample (Any): The data sample to be converted.
+    :Returns:   gym.spaces.Space
+    """
+    # Case for numerical data (numpy arrays, lists of numbers, etc.)
+    if isinstance(data_sample, (np.ndarray, list, tuple)):
+        # Ensure it's a numpy array to get shape and dtype
+        data_sample = np.array(data_sample)
+        if np.issubdtype(data_sample.dtype, np.integer):
+            low = np.iinfo(data_sample.dtype).min
+            high = np.iinfo(data_sample.dtype).max
+        elif np.issubdtype(data_sample.dtype, np.inexact):
+            low = float("-inf")
+            high = float("inf")
+        else:
+            raise ValueError()
+        return gym.spaces.Box(low=low, high=high,
+                              shape=data_sample.shape, dtype=data_sample.dtype)
+    # Case for dictionary data
+    elif isinstance(data_sample, dict):
+        # Recursively convert each item in the dictionary
+        return gym.spaces.Dict({key: get_gym_space(value)
+                                for key, value in data_sample.items()})
+    elif isinstance(data_sample, (int, float, str)):
+        return gym.spaces.Discrete(1)
+    else:
+        raise TypeError("Unsupported data type for Gym spaces conversion.")
+
+
+def add_chunking_dim(data):
+    """
+    Add a chunking dimension to the data.
+    """
+    if isinstance(data, dict):
+        return {k: add_chunking_dim(v) for k, v in data.items()}
+    elif isinstance(data, np.ndarray):
+        return np.expand_dims(data, axis=0)
+    else:
+        raise ValueError(f"Unsupported data type: {type(data)}")
+
+
+##############################################################################
+
+def train_reward_classifier(observation_space, action_space, is_chunked):
     """
     User can provide custom observation space to be used as the
     input to the classifier. This function is used to train a reward
     classifier using the provided positive and negative demonstrations.
+
+    NOTE: some datas are chunked, some are not. The replay buffer requires the 
+    data to be chunked before storing it. Thus, the argument is_chunked is used
 
     NOTE: this function is duplicated and used in both
     async_bin_relocation_fwbw_drq and async_cable_route_drq examples
@@ -74,7 +125,11 @@ def train_reward_classifier(observation_space, action_space):
     devices = jax.local_devices()
     sharding = jax.sharding.PositionalSharding(devices)
 
+    print("positive_demo_paths: ", FLAGS.positive_demo_paths)
+    print("negative_demo_paths: ", FLAGS.negative_demo_paths)
+
     image_keys = [k for k in observation_space.keys() if "state" not in k]
+    # check if the observation or action is chunked
 
     pos_buffer = MemoryEfficientReplayBufferDataStore(
         observation_space,
@@ -82,7 +137,11 @@ def train_reward_classifier(observation_space, action_space):
         capacity=10000,
         image_keys=image_keys,
     )
-    pos_buffer = populate_data_store(pos_buffer, FLAGS.positive_demo_paths)
+
+    # we will apply the chunking dimension to the data if it is not chunked
+    transition_transform = None if is_chunked else add_chunking_dim
+    pos_buffer = populate_data_store(
+        pos_buffer, FLAGS.positive_demo_paths, transition_transform)
 
     neg_buffer = MemoryEfficientReplayBufferDataStore(
         observation_space,
@@ -90,7 +149,8 @@ def train_reward_classifier(observation_space, action_space):
         capacity=10000,
         image_keys=image_keys,
     )
-    neg_buffer = populate_data_store(neg_buffer, FLAGS.negative_demo_paths)
+    neg_buffer = populate_data_store(
+        neg_buffer, FLAGS.negative_demo_paths, transition_transform)
 
     print(f"failed buffer size: {len(neg_buffer)}")
     print(f"success buffer size: {len(pos_buffer)}")
@@ -116,7 +176,7 @@ def train_reward_classifier(observation_space, action_space):
     sample = concat_batches(pos_sample, neg_sample, axis=0)
 
     rng, key = jax.random.split(rng)
-    classifier = create_classifier(key, sample["next_observations"], image_keys)
+    classifier = create_classifier(key, sample["observations"], image_keys)
 
     def data_augmentation_fn(rng, observations):
         for pixel_key in image_keys:
@@ -127,6 +187,41 @@ def train_reward_classifier(observation_space, action_space):
                     )
                 }
             )
+
+        # # NOTE: the original image is in uint8, and the color_transform function
+        # # requires float32, thus we need to convert the image to float32 first
+        # # then convert it back to uint8 after the color transformation
+        observations = observations.copy(
+            add_or_replace={
+                pixel_key: jnp.array(
+                    observations[pixel_key], dtype=jnp.float32)
+                / 255.0,
+            }
+        )
+        observations = observations.copy(
+            add_or_replace={
+                pixel_key: batched_color_transform(
+                    observations[pixel_key],
+                    rng,
+                    brightness=0.05,
+                    contrast=0.05,
+                    saturation=0.05,
+                    hue=0.05,
+                    apply_prob=1.0,
+                    to_grayscale_prob=0.0,  # don't convert to grayscale
+                    color_jitter_prob=0.5,
+                    shuffle=False,  # wont shuffle the color channels
+                    num_batch_dims=2,  # 2 images observations
+                ),
+            }
+        )
+        observations = observations.copy(
+            add_or_replace={
+                pixel_key: jnp.array(
+                    observations[pixel_key] * 255.0, dtype=jnp.uint8
+                ),
+            }
+        )
         return observations
 
     # Define the training step
@@ -143,7 +238,9 @@ def train_reward_classifier(observation_space, action_space):
         logits = state.apply_fn(
             {"params": state.params}, batch["data"], train=False, rngs={"dropout": key}
         )
-        train_accuracy = jnp.mean((nn.sigmoid(logits) >= 0.5) == batch["labels"])
+        # print("logits: ", nn.sigmoid(logits))
+        train_accuracy = jnp.mean(
+            (nn.sigmoid(logits) >= 0.5) == batch["labels"])
 
         return state.apply_gradients(grads=grads), loss, train_accuracy
 
@@ -154,7 +251,7 @@ def train_reward_classifier(observation_space, action_space):
         neg_sample = next(neg_iterator)
         # Merge and create labels
         sample = concat_batches(
-            pos_sample["next_observations"], neg_sample["observations"], axis=0
+            pos_sample["next_observations"], neg_sample["next_observations"], axis=0
         )
         rng, key = jax.random.split(rng)
         sample = data_augmentation_fn(key, sample)
@@ -168,11 +265,12 @@ def train_reward_classifier(observation_space, action_space):
         batch = {"data": sample, "labels": labels}
 
         rng, key = jax.random.split(rng)
-        classifier, train_loss, train_accuracy = train_step(classifier, batch, key)
+        classifier, train_loss, train_accuracy = train_step(
+            classifier, batch, key)
 
         print(
             f"Epoch: {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}"
-        )        
+        )
 
     # this is used to save the without the orbax checkpointing
     flax.config.update('flax_use_orbax_checkpointing', False)
@@ -182,6 +280,29 @@ def train_reward_classifier(observation_space, action_space):
         step=FLAGS.num_epochs,
         overwrite=True,
     )
+
+
+def main(_):
+    # read the first transition from the positive demo
+    with open(FLAGS.positive_demo_paths[0], 'rb') as f:
+        pos_first_transition = pkl.load(f)[0]
+
+    observation_sample = pos_first_transition["observations"]
+    action_sample = pos_first_transition["actions"]
+
+    is_chunked = False if len(action_sample.shape) == 1 else True
+
+    # we will add chunking dimension to the data if it is not chunked
+    if not is_chunked:
+        observation_sample = add_chunking_dim(observation_sample)
+        action_sample = add_chunking_dim(action_sample)
+
+    observation_space = get_gym_space(observation_sample)
+    action_space = get_gym_space(action_sample)
+    print("observation_space: ", observation_space)
+    print("action_space: ", action_space)
+
+    train_reward_classifier(observation_space, action_space, is_chunked)
 
 
 if __name__ == "__main__":
