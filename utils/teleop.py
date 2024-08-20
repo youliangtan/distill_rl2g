@@ -8,7 +8,6 @@ import cv2
 from manipulator_gym.interfaces.interface_service import ActionClientInterface
 import copy
 import pickle
-from train_reward_classifier import add_chunking_dim
 
 def print_yellow(x):
     return print("\033[93m {}\033[00m".format(x))
@@ -64,6 +63,7 @@ if __name__ == "__main__":
     parser.add_argument("--reset_pose", nargs="+", type=float, default=None)
     parser.add_argument("--log_transitions", type=str, default=None)
     parser.add_argument("--reward_classifier_ckpt_path", type=str, default=None)
+    parser.add_argument("--use_pg", action="store_true", help="Use Paligemma detector")
     args = parser.parse_args()
 
     recorded_transitions = []
@@ -78,6 +78,18 @@ if __name__ == "__main__":
     interface = ActionClientInterface(host=args.ip, port=args.port)
 
     _ed = args.eef_displacement
+
+    if args.use_pg:
+        # this artifact is used in the auto_eval project, TODO: remove this
+        from auto_eval.success_detector.paligemma import PaligemmaDetector
+        from PIL import Image
+        detector = PaligemmaDetector(
+            processor_id="google/paligemma-3b-pt-224",
+            model_id="/hdd/auto_eval/checkpoints/checkpoint-180/",
+            # device=device,
+            quantize=True,
+            return_str=False,
+        )
 
     if args.use_spacemouse:
         print("Using SpaceMouse for teleoperation.")
@@ -114,25 +126,30 @@ if __name__ == "__main__":
 
 
     def _get_full_obs():
-        return {
+        obs = {
             "image_primary": interface.primary_img,
-            "image_wrist": interface.wrist_img,
             "state": np.concatenate([
                 interface.eef_pose[:6],
                 [0.0],  # padding
                 [interface.gripper_state]], dtype=np.float32
             )
         }
-        
+        if interface.wrist_img is not None:
+            obs["image_wrist"] = interface.wrist_img
+        return obs
+
     if args.reward_classifier_ckpt_path:
+        from train_reward_classifier import add_chunking_dim
         from serl_launcher.networks.reward_classifier import load_classifier_func
         import jax
+
         rng = jax.random.PRNGKey(0)
         rng, key = jax.random.split(rng)
+        obs = _get_full_obs() 
         classifier_func = load_classifier_func(
             key=key,
-            sample=_get_full_obs(),
-            image_keys=["image_primary", "image_wrist"],
+            sample=obs,
+            image_keys=[k for k in obs.keys() if "state" not in k],
             checkpoint_path=args.reward_classifier_ckpt_path,
         )
 
@@ -156,18 +173,9 @@ if __name__ == "__main__":
         obs = _get_full_obs()
         interface.step_action(action)
         if args.log_dir:
-            obs = _get_full_obs()
             step_type = RLDSStepType.RESTART if first_step else RLDSStepType.TRANSITION
             logger(action, obs, 0.0, metadata=_mdata, step_type=step_type)
         
-        if args.reward_classifier_ckpt_path:
-            chunck_obs = add_chunking_dim(obs)
-            logit = classifier_func(chunck_obs).item()
-            # sigmoid function
-            reward = 1.0 / (1.0 + np.exp(-logit))
-            print(f"Reward: {reward}")
-            print(f" - Binarized: {reward > 0.5}")
-
         if args.log_transitions:
             transition = copy.deepcopy(
                 dict(
@@ -245,6 +253,12 @@ if __name__ == "__main__":
                     interface.custom_fn("reboot_motor", joint_name=joint_name)
 
             print_help()
+        elif key == ord("v") and args.use_pg:
+            """To eval the paligemma detector, TODO: remove this"""
+            prompt = "is the drawer open? answer yes or no" # hard coded
+            image = Image.fromarray(interface.primary_img).convert("RGB")
+            res = detector(prompt, image)
+            print("pali-gemma detector result: ", res)
 
         # command robot with spacemouse (continuous)
         if args.use_spacemouse:
@@ -265,6 +279,17 @@ if __name__ == "__main__":
             _execute_action(action)
 
         show_video(interface)
+
+        if args.reward_classifier_ckpt_path:
+            obs = _get_full_obs()
+            obs["image_primary"] = cv2.resize(obs["image_primary"], (128, 128)) # HACK
+            chunck_obs = add_chunking_dim(obs)
+            logit = classifier_func(chunck_obs).item()
+            # sigmoid function
+            reward = 1.0 / (1.0 + np.exp(-logit))
+            print(f"Reward: {reward}")
+            if reward > 0.5:
+                print_yellow("Positive detected!")
 
     if args.log_dir:
         logger.close()

@@ -9,7 +9,7 @@ import jax
 
 def _get_full_obs(): return {
     "image_primary": np.zeros((128, 128, 3)),
-    "image_wrist": np.zeros((128, 128, 3)),
+    # "image_wrist": np.zeros((128, 128, 3)),
 }
 
 
@@ -27,7 +27,7 @@ def display_transitions(pickle_file, reward_classifier_ckpt_path):
     classifier_func = load_classifier_func(
         key=key,
         sample=_get_full_obs(),
-        image_keys=["image_primary", "image_wrist"],
+        image_keys=["image_primary"],
         checkpoint_path=reward_classifier_ckpt_path,
     )
 
@@ -36,22 +36,26 @@ def display_transitions(pickle_file, reward_classifier_ckpt_path):
 
     for transition in recorded_transitions:
         primary_img = transition['next_observations']['image_primary']
-        wrist_img = transition['next_observations']['image_wrist']
+        # wrist_img = transition['next_observations']['image_wrist']
 
         # # Convert RGB to BGR for OpenCV
-        # primary_img = cv2.cvtColor(primary_img, cv2.COLOR_RGB2BGR)
+        primary_img = cv2.cvtColor(primary_img, cv2.COLOR_RGB2BGR)
         # wrist_img = cv2.cvtColor(wrist_img, cv2.COLOR_RGB2BGR)
 
         # Display the images
         cv2.imshow("Primary Image", primary_img)
-        if wrist_img is not None:
-            cv2.imshow("Wrist Image", wrist_img)
+        # if wrist_img is not None:
+        #     cv2.imshow("Wrist Image", wrist_img)
 
         # Wait for a key press and close the windows
         cv2.waitKey(10) & 0xFF
 
         # Check if the action is chunked (1, N) or (N,)
         is_chunked = False if len(transition["actions"].shape) == 1 else True
+
+        # resize img to 128x128
+        transition['next_observations']['image_primary'] = cv2.resize(
+            primary_img, (128, 128))
 
         # we will chunk the observations if they are not previously chunked
         if is_chunked:

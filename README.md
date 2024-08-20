@@ -189,21 +189,17 @@ Further robot related details, checkout: https://docs.google.com/document/d/1ka_
 python teleop.py --ip 100.96.12.13 --reset_pose 0.35 0.0 0.05 0.0 1.57 0.0 1.0
 ```
 
+## Train the Reward Classifier
+
 ```sh
 python train_reward_classifier.py \
  --negative_demo_paths /hdd/serl_ez/record-negative0.pkl \
  --negative_demo_paths /hdd/serl_ez/record-negative1.pkl \
+ --negative_demo_paths /hdd/serl_ez/record-negative2.pkl \
  --positive_demo_paths /hdd/serl_ez/record-positive0.pkl \
  --positive_demo_paths /hdd/serl_ez/record-positive1.pkl \
- --num_epochs 20 --batch_size 128
-```
-
-Boundary values for the robot: (TODO: update in task config)
-```md
-left up: [ 0.37475714  0.18148631 -0.15763126 -2.71667996  1.51710697 -2.69060227]
-left down:: [ 0.19210733  0.17131685 -0.17044547 -2.4135679   1.53244432 -2.39824322]
-right up: [ 0.38475837 -0.12368954 -0.16211809  2.79321092  1.51710126  2.81490258]
-right down: [ 0.19463957 -0.12460903 -0.16848471  2.62975978  1.53614119  2.64513735]
+ --classifier_ckpt_path /hdd/serl_ez/reward_classifier \
+ --num_epochs 80 --batch_size 128
 ```
 
 Verify the classifier
@@ -215,5 +211,38 @@ cd utils/
 python test_classifier.py --pickle_file /hdd/serl_ez/record-positive1.pkl --checkpoint_path checkpoint_20
 
 # 1. Using Teleop
-python teleop.py --ip 100.96.12.13 --reset_pose 0.35 0.0 0.05 0.0 1.57 0.0 1.0 --reward_classifier_ckpt_path checkpoint_20
+python teleop.py --ip 100.96.12.13 --reset_pose 0.195 0.0 0.05 0.0 1.57 0.0 1.0 --reward_classifier_ckpt_path /hdd/serl_ez/reward_classifier/checkpoint_80
+```
+
+## BC Policy (train and evaluate)
+
+Train
+```sh
+python bc_policy.py --batch_size 128 --preload_rlds_path /hdd/serl_ez/pick25_aug6 --checkpoint_path /hdd/serl_ez/bc_chkpt/
+```
+
+Evaluate
+```sh
+python bc_policy.py --manipulator_ip 100.96.12.13 --show_img \
+--checkpoint_path /hdd/serl_ez/bc_chkpt/ \
+--eval_checkpoint_step 16000 \
+--task task3
+```
+
+## SERL Policy
+
+```sh
+# learner
+python viperx_drq.py --batch_size 128  --learner \
+--checkpoint_period 5000 --checkpoint_path /hdd/serl_ez/serl_chkpts/ \
+--reward_classifier_ckpt_path /hdd/serl_ez/reward_classifier/checkpoint_80 \
+--preload_rlds_path /hdd/serl_ez/pick25_aug6 \
+--task task3
+
+# actor
+python viperx_drq.py --actor \
+--manipulator_ip 100.96.12.13 --show_img --reward_classifier_ckpt_path /hdd/serl_ez/reward_classifier/checkpoint_80
+
+# provide additional args for ibrl
+--bc_chkpt_path /hdd/serl_ez/bc_chkpt --bc_chkpt_step 16000
 ```

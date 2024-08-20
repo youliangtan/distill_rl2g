@@ -11,6 +11,7 @@ import gym
 import os
 from absl import app, flags
 import numpy as np
+import cv2
 
 from serl_launcher.utils.train_utils import concat_batches
 from serl_launcher.vision.data_augmentations import batched_random_crop, batched_color_transform
@@ -33,10 +34,11 @@ flags.DEFINE_integer("batch_size", 256, "Batch size for training")
 flags.DEFINE_integer("num_epochs", 100, "Number of epochs for training")
 
 
-def populate_data_store(
+def _populate_data_store(
     data_store: MemoryEfficientReplayBufferDataStore,
     demos_path: str,
     transform: Optional[Callable] = None,
+    resize_image_keys = None,
 ):
     """
     Utility function to populate demonstrations data into data_store.
@@ -50,14 +52,19 @@ def populate_data_store(
         with open(demo_path, "rb") as f:
             demo = pkl.load(f)
             for transition in demo:
-                # Temp method to apply transform to the observations and actions
+                # resize to 128x128 if resize_size is provided
+                if resize_image_keys is not None:
+                    for key in resize_image_keys:
+                        transition["observations"][key] = cv2.resize(
+                            transition["observations"][key], (128, 128))
+                        transition["next_observations"][key] = cv2.resize(
+                            transition["next_observations"][key], (128, 128))
+
+                # HACK method to apply transform to the observations and actions
                 if transform is not None:
-                    transition["observations"] = transform(
-                        transition["observations"])
-                    transition["next_observations"] = transform(
-                        transition["next_observations"]
-                    )
-                    transition["actions"] = transform(transition["actions"])
+                    for key in ["observations", "next_observations", "actions"]:
+                        transition[key] = transform(transition[key])
+
                 data_store.insert(transition)
     print(f"Populated data store with {len(data_store)} transitions.")
     return data_store
@@ -140,8 +147,8 @@ def train_reward_classifier(observation_space, action_space, is_chunked):
 
     # we will apply the chunking dimension to the data if it is not chunked
     transition_transform = None if is_chunked else add_chunking_dim
-    pos_buffer = populate_data_store(
-        pos_buffer, FLAGS.positive_demo_paths, transition_transform)
+    pos_buffer = _populate_data_store(
+        pos_buffer, FLAGS.positive_demo_paths, transition_transform, resize_image_keys=image_keys)
 
     neg_buffer = MemoryEfficientReplayBufferDataStore(
         observation_space,
@@ -149,8 +156,8 @@ def train_reward_classifier(observation_space, action_space, is_chunked):
         capacity=10000,
         image_keys=image_keys,
     )
-    neg_buffer = populate_data_store(
-        neg_buffer, FLAGS.negative_demo_paths, transition_transform)
+    neg_buffer = _populate_data_store(
+        neg_buffer, FLAGS.negative_demo_paths, transition_transform, resize_image_keys=image_keys)
 
     print(f"failed buffer size: {len(neg_buffer)}")
     print(f"success buffer size: {len(pos_buffer)}")
@@ -203,10 +210,10 @@ def train_reward_classifier(observation_space, action_space, is_chunked):
                 pixel_key: batched_color_transform(
                     observations[pixel_key],
                     rng,
-                    brightness=0.05,
-                    contrast=0.05,
-                    saturation=0.05,
-                    hue=0.05,
+                    brightness=0.1,
+                    contrast=0.1,
+                    saturation=0.1,
+                    hue=0.1,
                     apply_prob=1.0,
                     to_grayscale_prob=0.0,  # don't convert to grayscale
                     color_jitter_prob=0.5,
@@ -288,6 +295,13 @@ def main(_):
         pos_first_transition = pkl.load(f)[0]
 
     observation_sample = pos_first_transition["observations"]
+
+    image_keys = [k for k in observation_sample.keys() if "state" not in k]
+    # resize all imgages to 128x128
+    for key in image_keys:
+        observation_sample[key] = cv2.resize(
+            observation_sample[key], (128, 128))
+
     action_sample = pos_first_transition["actions"]
 
     is_chunked = False if len(action_sample.shape) == 1 else True

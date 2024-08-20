@@ -42,12 +42,10 @@ class BinaryRewardClassifierWrapper(gym.Wrapper):
         self,
         env: Env,
         reward_classifier_func,
-        terminate_on_n_reward: int = 1,
+        terminate_on_n_reward: int = 1, # not in used (NOTE: maybe can introduced to prevent false positive)
     ):
         super().__init__(env)
         self.reward_classifier_func = reward_classifier_func
-        self.terminate_on_n_reward = terminate_on_n_reward
-        self._reward_step_count = 0
 
     def compute_reward(self, obs):
         if self.reward_classifier_func is not None:
@@ -57,16 +55,8 @@ class BinaryRewardClassifierWrapper(gym.Wrapper):
 
     def step(self, action):
         obs, rew, done, truncated, info = self.env.step(action)
-        bin_rew, _ = self.compute_reward(obs)
-
-        # we will terminate the episode if we get n consecutive rewards
-        if bin_rew == 1:
-            self._reward_step_count += 1
-            if self._reward_step_count >= self.terminate_on_n_reward:
-                done = True
-        else:
-            self._reward_step_count = 0
-
+        bin_rew, r_done = self.compute_reward(obs)
+        done = done or r_done
         rew += bin_rew
         return obs, rew, done, truncated, info
 
@@ -151,7 +141,6 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
 
         self.reward_classifier_func = reward_classifier_func
         self.terminate_on_n_reward = terminate_on_n_reward
-        self._reward_step_count = 0
         self._target_z = target_z
         self._target_z_lift = target_z_lift # v2
         self._gripper_penalty = gripper_penalty # v3
@@ -168,9 +157,9 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
         return 0.0
 
     def compute_reward(self, obs, action):
-        if self._target_z_lift:
+        if self._gripper_penalty:
             return self.compute_reward_v3(obs, action)
-        elif self._gripper_penalty:
+        elif self._target_z_lift:
             return self.compute_reward_v2(obs, action)
         else:
             return self.compute_reward_v1(obs, action)
@@ -235,6 +224,7 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
         An extension of sparse reward with gripper penalty
         """
         prob = self.compute_classifier_reward(obs)
+        print_blue(f"prob: {prob}!!")
         bin_rew = (prob >= 0.5) * 1
 
         state = obs["state"][-1]
@@ -245,7 +235,6 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
         rew = 0.0
 
         # penalize when there is a change in gripper command
-        # print(f"gripper action: ", action[-1])
         if action[-1] > 0.0 and not self._prev_cmd_gripper_open:
             rew -= self._gripper_penalty
             # print("penalize gripper open")
@@ -259,12 +248,21 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
         if debug:
             print(f"bin_rew: {bin_rew}, gripper: {is_gripper_close}, z_axis: {z_axis}")
 
-        if bin_rew == 1 and is_gripper_close and z_axis >= self._target_z_lift:
-            # print_blue("reached target z lift")
-            done = True
-            rew += 1.0
+        # if we would like to lift the object
+        if self._target_z_lift:
+            if bin_rew == 1 and is_gripper_close and z_axis >= self._target_z_lift:
+                print_blue("reached target z lift")
+                rew += 1.0
+                done = True
+            else:
+                done = False
         else:
-            done = False
+            if bin_rew == 1 and is_gripper_close and z_axis <= self._target_z:
+                print_blue("reached target z")
+                done = True
+                rew += 1.0
+            else:
+                done = False
         return rew, done
 
     def step(self, action):
@@ -273,19 +271,9 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
         r_rew, r_done= self.compute_reward(obs, action)
         rew += r_rew
         done = done or r_done
-
-        # assume this is when gripper is closed and bin_rew is true
-        if r_rew >= 1.5:
-            self._reward_step_count += 1
-            if self._reward_step_count >= self.terminate_on_n_reward:
-                done = True
-        else:
-            self._reward_step_count = 0
-
         return obs, rew, done, truncated, info
 
     def reset(self, **kwargs):
-        self._reward_step_count = 0
         self._prev_cmd_gripper_open = True # gripper is open during reset
         return self.env.reset(**kwargs)
 

@@ -71,7 +71,7 @@ flags.DEFINE_integer("replay_buffer_capacity", 200000,
 
 flags.DEFINE_integer("random_steps", 0, # TODO switch back
                      "Sample random actions for this many steps.")
-flags.DEFINE_integer("training_starts", 200,
+flags.DEFINE_integer("training_starts", 20,
                      "Training starts after this step.")
 flags.DEFINE_integer("steps_per_update", 20,
                      "Number of steps per update the server.")
@@ -135,7 +135,7 @@ def make_drq_agent(
     sample_action,
     image_keys=("image",),
     encoder_type="small",
-    discount=0.98,
+    discount=0.97,
 ):
     """
     NOTE: modified version of the make_drq_agent function in the serl_launcher
@@ -167,8 +167,8 @@ def make_drq_agent(
         discount=discount,
         backup_entropy=False,
         critic_ensemble_size=10,
-        critic_subsample_size=2, # NOTE YL: 1 default 2.
-        image_augmentation=("random_crop", "color_transform"),
+        critic_subsample_size=1, # NOTE YL: 1 default 2.
+        image_augmentation=("random_crop"),#, "color_transform"),
     )
     return agent
 
@@ -485,6 +485,7 @@ def learner(rng, agent: DrQAgent,
     if demo_buffer is None:
         single_buffer_batch_size = FLAGS.batch_size
         demo_iterator = None
+        # raise NotImplementedError("should provide demo buffer")
     else:
         single_buffer_batch_size = FLAGS.batch_size // 2
         demo_iterator = demo_buffer.get_iterator(
@@ -525,6 +526,8 @@ def learner(rng, agent: DrQAgent,
                 if demo_iterator is not None:
                     demo_batch = next(demo_iterator)
                     batch = concat_batches(batch, demo_batch, axis=0)
+                # else:
+                #     raise NotImplementedError("should provide demo buffer")
 
             with timer.context("train_critics"):
                 agent, critics_info = agent.update_critics(
@@ -539,7 +542,8 @@ def learner(rng, agent: DrQAgent,
             if demo_iterator is not None:
                 demo_batch = next(demo_iterator)
                 batch = concat_batches(batch, demo_batch, axis=0)
-
+            # else:
+            #     raise NotImplementedError("should provide demo buffer")
             agent, update_info = agent.update_high_utd(batch, utd_ratio=1)
 
         # publish the updated network
@@ -726,18 +730,15 @@ def main(_):
             data['actions'] = action
             data["next_observations"] = next_obs
 
-            # # will only use the data if the language text contains "pick"
-            # if "pick" not in metadata["language_text"]:
-            #     return None
-
             # End of Trajectory
             if metadata["step"] == metadata["step_size"] - 1:
                 data["dones"] = True  # explicitly set dones to True
-                data["masks"] = 0  # explicitly set masks to 0
+                data["masks"] = 1  # explicitly set masks to 0 or 1?
                 print(
                     f"total reward in eps: {total_reward} , with size: {metadata['step_size']}")
                 print("-"*50)
                 total_reward = 0.0
+                env_rew_func.reset()
 
                 if skip_curr_eps:
                     skip_curr_eps = False
@@ -764,11 +765,12 @@ def main(_):
                     return None
                 elif done:
                     data["dones"] = True  # explicitly set dones to True
-                    data["masks"] = 0  # explicitly set masks to 0
+                    data["masks"] = 1  # explicitly set masks to 0 or 1?
                     skip_curr_eps = True
                     # print("MARKING DONE") # sanity check
                     # return None
                 total_reward += rew # for debugging
+            print(f"step: {metadata['step']}, rew: {data['rewards']}, done: {data['dones']}, mask: {data['masks']}")
             return data
 
         #########################################################################
@@ -796,7 +798,6 @@ def main(_):
                 preload_rlds_path=FLAGS.preload_rlds_path,
                 preload_data_transform=preload_data_transform,
             )
-            print_green(f"demo_buffer size: {len(demo_buffer)}")
         else:
             demo_buffer = None
 
