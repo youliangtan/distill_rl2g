@@ -318,12 +318,54 @@ def actor(agent: DrQAgent, task_config: dict,
     def jit_forward_critic(observations, actions, rng):
         return agent.forward_critic(observations, actions, rng, train=False)
 
+    # NOTE: for keyboard intervention control
+    from manipulator_gym.control.keyboard import KeyboardInputControl
+    from pynput import keyboard
+
+    input_control = KeyboardInputControl(translation_diff=1.0, rotation_diff=1.0)
+    cv_key = None
+    active_intervention = False
+    intervention_time = time.time()
+
     for step in tqdm.tqdm(range(FLAGS.max_steps), dynamic_ncols=True):
         timer.tick("total")
 
         with timer.context("sample_actions"):
             if step < FLAGS.random_steps:
                 actions = env.action_space.sample()
+
+            ###################################################################
+            # NOTE: for keyboard intervention control
+            if time.time() - intervention_time > 2.0 and cv_key == ord("t"):
+                active_intervention = not active_intervention
+                intervention_time = time.time()
+                print_yellow(f"switch active_intervention: {active_intervention}")
+
+            # NOTE: for keyboard intervention control
+            elif active_intervention:
+                print_yellow("[intervention teleop in progress]")
+
+                raw_actions, pressed = input_control.get_action()  
+                # if raw_actions all zeros and pressed is empty
+                while np.all(raw_actions == 0):
+                    raw_actions, pressed = input_control.get_action()
+ 
+                    # add time to prevent overlapping key press detection
+                    if time.time() - intervention_time > 2.0 and \
+                        keyboard.KeyCode.from_char("t") in pressed:
+                        print_yellow("exit intervention")
+                        active_intervention = False
+                        time.sleep(1.0)
+                        break
+
+                print(raw_actions, pressed)
+                actions = np.zeros(task_config.action_dim)
+                actions[:task_config.action_dim] = raw_actions[:task_config.action_dim]
+                if keyboard.Key.space not in pressed:
+                    actions[-1] = 1.0 # open gripper if space is not pressed
+
+                print("action from intervention: ", actions)
+            ###################################################################
             else:
                 sampling_rng, key = jax.random.split(sampling_rng)
                 actions = agent.sample_actions(
@@ -348,7 +390,7 @@ def actor(agent: DrQAgent, task_config: dict,
                     # get val from critic
                     bc_q = jit_forward_critic(
                         observations=jax.device_put(obs),
-                        actions=bc_actions,
+                        actions=bc_actions, 
                         rng=sampling_rng,
                         # train=False,
                     )
@@ -389,7 +431,7 @@ def actor(agent: DrQAgent, task_config: dict,
                 for k in ["image_primary", "image_wrist"]:
                     img = next_obs[k][0]
                     cv2.imshow(k, cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-                cv2.waitKey(10)
+                cv_key = cv2.waitKey(10) & 0xFF
 
             obs = next_obs
             if done or truncated:

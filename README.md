@@ -241,7 +241,7 @@ python viperx_drq.py --batch_size 128  --learner \
 
 # actor
 python viperx_drq.py --actor \
---manipulator_ip 100.96.12.13 --show_img --reward_classifier_ckpt_path /hdd/serl_ez/reward_classifier/checkpoint_80
+--manipulator_ip 100.96.12.13 --show_img --reward_classifier_ckpt_path /hdd/serl_ez/reward_classifier/checkpoint_80 --task task3
 
 # provide additional args for ibrl
 --bc_chkpt_path /hdd/serl_ez/bc_chkpt --bc_chkpt_step 16000

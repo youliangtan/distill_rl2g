@@ -63,7 +63,7 @@ class PickUpEzSquishy(GoToTarget):
     reset_pose = np.array([0.195, 0.0, 0.10, 0.0, math.pi/2, 0.0, 1.0]) # open
     reward_wrapper=FancyRewardClassifierWrapperWithGripper
     reward_wrapper_kwargs=dict( # THIS uses v3 reward (gripper penalty  + sparse reward)
-        target_z=-0.16, # same as goal_pose[2]
+        target_z=-0.15, # same as goal_pose[2]
         # target_z_lift=-0.12,  # NOTE: use sparse reward when provided v2
         gripper_penalty=0.1,   # sparse reward v3
     )

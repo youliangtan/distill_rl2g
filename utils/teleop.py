@@ -55,7 +55,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--ip", type=str, default="localhost")
     parser.add_argument("--port", type=int, default=5556)
-    parser.add_argument("--eef_displacement", type=float, default=0.01)
+    parser.add_argument("--translation_diff", type=float, default=0.01)
+    parser.add_argument("--rotation_diff", type=float, default=0.02)
     parser.add_argument("--use_spacemouse", action="store_true")
     parser.add_argument("--no_rotation", action="store_true")
     parser.add_argument("--log_dir", type=str, default=None)
@@ -63,7 +64,7 @@ if __name__ == "__main__":
     parser.add_argument("--reset_pose", nargs="+", type=float, default=None)
     parser.add_argument("--log_transitions", type=str, default=None)
     parser.add_argument("--reward_classifier_ckpt_path", type=str, default=None)
-    parser.add_argument("--use_pg", action="store_true", help="Use Paligemma detector")
+    parser.add_argument("--pg", type=str, default=None, help="use paligemma detector")
     args = parser.parse_args()
 
     recorded_transitions = []
@@ -77,51 +78,50 @@ if __name__ == "__main__":
 
     interface = ActionClientInterface(host=args.ip, port=args.port)
 
-    _ed = args.eef_displacement
-
-    if args.use_pg:
+    if args.pg:
         # this artifact is used in the auto_eval project, TODO: remove this
         from auto_eval.success_detector.paligemma import PaligemmaDetector
         from PIL import Image
         detector = PaligemmaDetector(
             processor_id="google/paligemma-3b-pt-224",
-            model_id="/hdd/auto_eval/checkpoints/checkpoint-180/",
+            # model_id="/hdd/auto_eval/all_task_checkpoints/checkpoint-540/",
+            # model_id="/hdd/auto_eval/all_task_checkpoints2/checkpoint-580/",
+            model_id=args.pg,
             # device=device,
             quantize=True,
-            return_str=False,
         )
+
+    _dt = args.translation_diff
+    _dr = args.rotation_diff
 
     if args.use_spacemouse:
         print("Using SpaceMouse for teleoperation.")
-        from manipulator_gym.utils.spacemouse import SpaceMouseExpert
+        from manipulator_gym.control.spacemouse import SpaceMouseControl
+        spacemouse = SpaceMouseControl()
 
-        spacemouse = SpaceMouseExpert()
-
-        def _get_spacemouse_action(with_rotation=True):
+        def _get_spacemouse_action():
             sm_action, buttons = spacemouse.get_action()
             action = np.zeros(7)
-            dim = 6 if with_rotation else 3
-            for i in range(dim):
-                if sm_action[i] > 0.5:
-                    action[i] = _ed
-                elif sm_action[i] < -0.5:
-                    action[i] = -_ed
+            for i in range(3):
+                action[i] = _dt if sm_action[i] > 0.5 else (-_dt if sm_action[i] < -0.5 else 0)
+            for i in range(3, 6):
+                action[i] = _dr if sm_action[i] > 0.5 else (-_dr if sm_action[i] < -0.5 else 0)
             return action
 
     else:
         keyboard_action_map = {
-            ord("w"): np.array([_ed, 0, 0, 0, 0, 0, 0]),
-            ord("s"): np.array([-_ed, 0, 0, 0, 0, 0, 0]),
-            ord("a"): np.array([0, _ed, 0, 0, 0, 0, 0]),
-            ord("d"): np.array([0, -_ed, 0, 0, 0, 0, 0]),
-            ord("z"): np.array([0, 0, _ed, 0, 0, 0, 0]),
-            ord("c"): np.array([0, 0, -_ed, 0, 0, 0, 0]),
-            ord("i"): np.array([0, 0, 0, _ed, 0, 0, 0]),
-            ord("k"): np.array([0, 0, 0, -_ed, 0, 0, 0]),
-            ord("j"): np.array([0, 0, 0, 0, _ed, 0, 0]),
-            ord("l"): np.array([0, 0, 0, 0, -_ed, 0, 0]),
-            ord("n"): np.array([0, 0, 0, 0, 0, _ed, 0]),
-            ord("m"): np.array([0, 0, 0, 0, 0, -_ed, 0]),
+            ord("w"): np.array([_dt, 0, 0, 0, 0, 0, 0]),
+            ord("s"): np.array([-_dt, 0, 0, 0, 0, 0, 0]),
+            ord("a"): np.array([0, _dt, 0, 0, 0, 0, 0]),
+            ord("d"): np.array([0, -_dt, 0, 0, 0, 0, 0]),
+            ord("z"): np.array([0, 0, _dt, 0, 0, 0, 0]),
+            ord("c"): np.array([0, 0, -_dt, 0, 0, 0, 0]),
+            ord("i"): np.array([0, 0, 0, _dr, 0, 0, 0]),
+            ord("k"): np.array([0, 0, 0, -_dr, 0, 0, 0]),
+            ord("j"): np.array([0, 0, 0, 0, _dr, 0, 0]),
+            ord("l"): np.array([0, 0, 0, 0, -_dr, 0, 0]),
+            ord("n"): np.array([0, 0, 0, 0, 0, _dr, 0]),
+            ord("m"): np.array([0, 0, 0, 0, 0, -_dr, 0]),
         }
 
 
@@ -253,9 +253,10 @@ if __name__ == "__main__":
                     interface.custom_fn("reboot_motor", joint_name=joint_name)
 
             print_help()
-        elif key == ord("v") and args.use_pg:
+        elif key == ord("v") and args.pg:
             """To eval the paligemma detector, TODO: remove this"""
-            prompt = "is the drawer open? answer yes or no" # hard coded
+            # prompt = "is the drawer open? answer yes or no" # hard coded
+            prompt = "is the eggplant in the sink or in the basket? answer sink or basket or invalid"
             image = Image.fromarray(interface.primary_img).convert("RGB")
             res = detector(prompt, image)
             print("pali-gemma detector result: ", res)

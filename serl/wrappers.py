@@ -219,7 +219,7 @@ class FancyRewardClassifierWrapperWithGripper(gym.Wrapper):
             rew, done = 0.0, False
         return rew, done
 
-    def compute_reward_v3(self, obs, action, debug=False):
+    def compute_reward_v3(self, obs, action, debug=True):
         """
         An extension of sparse reward with gripper penalty
         """
